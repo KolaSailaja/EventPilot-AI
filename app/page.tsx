@@ -1,69 +1,98 @@
-import Image from "next/image";
+import Link from "next/link";
+import { auth } from "@/auth";
+import { redirect } from "next/navigation";
 
-export default function Home() {
+export default async function Home() {
+  const session = await auth();
+
+  if (session?.user) {
+    redirect("/dashboard");
+  }
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
+    <main className="min-h-screen">
+      <header className="mx-auto flex max-w-6xl items-center justify-between px-6 py-5">
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-amber-600 text-lg font-bold text-white shadow-sm">
+            EP
+          </div>
+          <div>
+            <p className="text-lg font-semibold">EventPilot AI</p>
+          </div>
+        </div>
+        <nav className="flex items-center gap-4 text-sm font-medium text-stone-700">
+          <Link href="/sign-in">Sign in</Link>
+          <Link href="/sign-up" className="rounded-full bg-stone-900 px-4 py-2 text-white">
+            Create event
+          </Link>
+        </nav>
+      </header>
+
+      <section className="mx-auto grid max-w-6xl gap-10 px-6 py-16 lg:grid-cols-[1.2fr_0.8fr] lg:items-center">
+        <div>
+          <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-amber-800">
+            Adaptive planning workspace
+          </span>
+          <h1 className="mt-5 max-w-xl text-5xl font-black tracking-tight text-stone-900">
+            Plan every event with budget, guest, and timeline in sync.
           </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+          <p className="mt-5 max-w-xl text-lg text-stone-600">
+            EventPilot AI helps couples, families, and organizers turn ideas into a coordinated plan with AI suggestions, approvals, and impact-aware change reviews.
           </p>
+          <div className="mt-8 flex flex-wrap gap-4">
+            <Link href="/sign-up" className="rounded-full bg-amber-600 px-6 py-3 font-medium text-white shadow-sm transition hover:bg-amber-700">
+              Start planning
+            </Link>
+            <Link href="/sign-in" className="rounded-full border border-stone-300 bg-white px-6 py-3 font-medium text-stone-700 transition hover:border-stone-400">
+              View demo dashboard
+            </Link>
+          </div>
+          <div className="mt-8 grid max-w-xl grid-cols-3 gap-4 text-left">
+            <div className="rounded-2xl border border-stone-200 bg-white/80 p-3">
+              <p className="text-2xl font-bold text-stone-900">6+</p>
+              <p className="text-sm text-stone-600">event types</p>
+            </div>
+            <div className="rounded-2xl border border-stone-200 bg-white/80 p-3">
+              <p className="text-2xl font-bold text-stone-900">3x</p>
+              <p className="text-sm text-stone-600">faster coordination</p>
+            </div>
+            <div className="rounded-2xl border border-stone-200 bg-white/80 p-3">
+              <p className="text-2xl font-bold text-stone-900">AI</p>
+              <p className="text-sm text-stone-600">with review gates</p>
+            </div>
+          </div>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+
+        <div className="rounded-[28px] border border-stone-200 bg-white p-6 shadow-[0_18px_45px_rgba(120,113,108,0.12)]">
+          <div className="space-y-5">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium text-stone-500">Wedding event</span>
+              <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-bold text-emerald-700">On track</span>
+            </div>
+            <div className="rounded-2xl bg-stone-100 p-4">
+              <p className="text-sm text-stone-500">Budget summary</p>
+              <div className="mt-2 flex items-end justify-between">
+                <p className="text-3xl font-bold text-stone-900">₹4.2L</p>
+                <p className="text-sm font-medium text-emerald-600">₹1.1L remaining</p>
+              </div>
+            </div>
+            <div className="space-y-3 text-sm text-stone-600">
+              <div className="flex items-center justify-between rounded-xl bg-stone-50 p-3">
+                <span>Guest count</span>
+                <strong className="font-semibold text-stone-900">220</strong>
+              </div>
+              <div className="flex items-center justify-between rounded-xl bg-stone-50 p-3">
+                <span>Vendor quotes</span>
+                <strong className="font-semibold text-stone-900">4 confirmed</strong>
+              </div>
+              <div className="flex items-center justify-between rounded-xl bg-stone-50 p-3">
+                <span>Task risk</span>
+                <strong className="font-semibold text-amber-700">2 deadlines at risk</strong>
+              </div>
+            </div>
+          </div>
         </div>
-      </main>
-    </div>
+      </section>
+    </main>
   );
 }
