@@ -47,6 +47,21 @@ export const taskSchema = z.object({
   status: z.enum(["pending", "in_progress", "done", "blocked"]).default("pending"),
 });
 
+export const taskStatusSchema = z.enum(["pending", "in_progress", "done", "blocked"]);
+
+export const planConceptSchema = z.object({
+  mood: z.string().trim().max(120).optional().or(z.literal("")),
+  palette: z.string().trim().max(200).optional().or(z.literal("")),
+  lighting: z.string().trim().max(200).optional().or(z.literal("")),
+  activities: z.string().trim().max(300).optional().or(z.literal("")),
+  menu: z.string().trim().max(300).optional().or(z.literal("")),
+  accessibility: z.string().trim().max(200).optional().or(z.literal("")),
+  schedule: z.string().trim().max(300).optional().or(z.literal("")),
+  constraints: z.string().trim().max(500).optional().or(z.literal("")),
+  budgetStrategy: z.string().trim().max(300).optional().or(z.literal("")),
+  tradeOffs: z.string().trim().max(500).optional().or(z.literal("")),
+});
+
 export const guestSchema = z.object({
   name: z.string().trim().min(2, "Guest name is required.").max(120),
   email: z.string().trim().email("Enter a valid email address.").max(254).optional().or(z.literal("")),

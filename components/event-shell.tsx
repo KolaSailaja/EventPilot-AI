@@ -4,10 +4,10 @@ export function EventShell({ eventId, eventName }: { eventId: string; eventName:
   const tabs = [
     { href: `/events/${eventId}`, label: "Overview" },
     { href: `/events/${eventId}/budget`, label: "Budget" },
-    { href: `/events/${eventId}/tasks`, label: "Timeline" },
+    { href: `/events/${eventId}/tasks`, label: "Command Center" },
     { href: `/events/${eventId}/vendors`, label: "Vendors" },
     { href: `/events/${eventId}/guests`, label: "Guests" },
-    { href: `/events/${eventId}/ai`, label: "AI Studio" },
+    { href: `/events/${eventId}/ai`, label: "Vision Studio" },
     { href: `/events/${eventId}/impact`, label: "Impact" },
     { href: `/events/${eventId}/export`, label: "Export" },
   ];
