@@ -77,6 +77,10 @@ export default async function EventPage({ params }: { params: Promise<{ id: stri
             currency={event.currency}
             eventType={event.type}
             vendorQuote={vendorQuoteTotal}
+            allocations={event.categories.map((category) => ({
+              name: category.name,
+              allocation: Number(category.allocation),
+            }))}
           />
 
           <section className="surface rounded-[30px] p-6">

@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, unlinkSync } from "node:fs";
 import path from "node:path";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const authState = vi.hoisted(() => ({ userId: null as string | null }));
 
@@ -31,6 +31,7 @@ let actions: EventActions;
 let rateLimit: typeof import("../lib/rate-limit").rateLimit;
 let authorizeCredentials: typeof import("../lib/credentials").authorizeCredentials;
 let registerHandler: typeof import("../app/api/register/route").POST;
+let generateBudgetHandler: typeof import("../app/api/budget/generate/route").POST;
 let dashboardPage: () => Promise<unknown>;
 let readPages: Array<(args: { params: Promise<{ id: string }> }) => Promise<unknown>>;
 let databasePath: string;
@@ -96,6 +97,7 @@ beforeAll(async () => {
   rateLimit = (await import("../lib/rate-limit")).rateLimit;
   authorizeCredentials = (await import("../lib/credentials")).authorizeCredentials;
   registerHandler = (await import("../app/api/register/route")).POST;
+  generateBudgetHandler = (await import("../app/api/budget/generate/route")).POST;
   dashboardPage = (await import("../app/dashboard/page")).default;
   readPages = [
     (await import("../app/events/[id]/page")).default,
@@ -107,12 +109,17 @@ beforeAll(async () => {
     (await import("../app/events/[id]/impact/page")).default,
     (await import("../app/events/[id]/export/page")).default,
   ];
-});
+}, 30_000);
 
 beforeEach(async () => {
   authState.userId = null;
   await prisma.user.deleteMany();
   await prisma.rateLimitBucket.deleteMany();
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
 });
 
 afterAll(async () => {
@@ -148,6 +155,108 @@ describe("database-backed event workflows", () => {
     expect(event?.categories).toHaveLength(5);
     expect(event?.categories.reduce((sum, category) => sum + category.allocation, 0)).toBeCloseTo(5000.25);
     expect(collectRenderedText(await dashboardPage())).toContain("Autumn gathering");
+  });
+
+  it("creates an event with an explicitly approved, context-matched budget draft", async () => {
+    await createUser("owner");
+    authState.userId = "owner";
+    const draft = {
+      categories: [{
+        name: "Community space",
+        amount: 800,
+        basis: "One-day local venue",
+        explanation: "Indicative estimate for a modest gathering.",
+        priority: "high",
+        alternative: "Public park",
+      }],
+      contingency: 100,
+      rationale: "Confirm costs directly.",
+      tradeOffs: ["Use a public space if available."],
+    };
+    const profile = {
+      eventType: "Festival",
+      location: "Pune",
+      guestCount: 40,
+      budget: 1_000,
+      currency: "INR",
+      date: "2026-11-08",
+      priorities: "",
+    };
+
+    await expect(actions.createEvent(form({
+      name: "Community festival",
+      type: "Festival",
+      date: "2026-11-08",
+      location: "Pune",
+      guestCount: "40",
+      budget: "1000",
+      currency: "INR",
+      budgetDraft: JSON.stringify(draft),
+      budgetDraftProfile: JSON.stringify(profile),
+    }))).rejects.toThrow(/^REDIRECT:\/events\//);
+
+    const event = await prisma.event.findFirstOrThrow({
+      where: { userId: "owner", name: "Community festival" },
+      include: { categories: true },
+    });
+    expect(event.categories.map((category) => category.name)).toEqual(["Community space", "Contingency"]);
+    expect(event.categories[0]?.notes).toContain("Indicative AI estimate");
+    expect(event.categories.reduce((sum, category) => sum + category.allocation, 0)).toBe(900);
+  });
+
+  it("does not persist generated drafts until approval, and applying twice does not duplicate categories", async () => {
+    await createUser("owner");
+    const event = await createEvent("owner");
+    const oldCategory = await prisma.budgetCategory.create({
+      data: { eventId: event.id, name: "Old allocation", allocation: 200 },
+    });
+    const expense = await prisma.expense.create({
+      data: { eventId: event.id, categoryId: oldCategory.id, title: "Paid deposit", amount: 25, isActual: true },
+    });
+    authState.userId = "owner";
+    vi.stubEnv("OPENAI_API_KEY", "server-test-key");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      choices: [{
+        message: {
+          content: JSON.stringify({
+            categories: [{
+              name: "Food and hospitality",
+              amount: 500,
+              basis: "20 guests",
+              explanation: "Simple shared meal estimate.",
+              priority: "high",
+              alternative: "Community potluck",
+            }],
+            contingency: 100,
+            rationale: "Indicative only; confirm costs.",
+            tradeOffs: ["Use a potluck to reduce food costs."],
+          }),
+        },
+      }],
+    }), { status: 200 })));
+
+    const generated = await generateBudgetHandler(new Request("http://localhost/api/budget/generate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ eventId: event.id, priorities: "simple food" }),
+    }));
+    expect(generated.status).toBe(200);
+    expect(await prisma.budgetCategory.count({ where: { eventId: event.id } })).toBe(1);
+
+    const approvedDraft = JSON.parse(await generated.text()).draft;
+    const approval = form({ budgetDraft: JSON.stringify(approvedDraft) });
+    await actions.applyBudgetDraft(event.id, approval);
+    await actions.applyBudgetDraft(event.id, approval);
+
+    const categories = await prisma.budgetCategory.findMany({ where: { eventId: event.id } });
+    expect(categories).toHaveLength(2);
+    expect(categories.map((category) => category.name).sort()).toEqual(["Contingency", "Food and hospitality"]);
+    expect(categories.find((category) => category.name === "Food and hospitality")?.allocation).toBe(500);
+    expect(await prisma.expense.findUniqueOrThrow({ where: { id: expense.id } })).toMatchObject({
+      amount: 25,
+      isActual: true,
+      categoryId: null,
+    });
   });
 
   it("persists expenses, tasks, guests/RSVPs, vendors/quotes, and planning records", async () => {
@@ -266,6 +375,14 @@ describe("authorization isolation", () => {
     ).rejects.toThrow("not authorized");
     await expect(actions.reviewProposal(event.id, form({ summary: "forged" }))).rejects.toThrow("not authorized");
     await expect(actions.deleteEvent(event.id)).rejects.toThrow("not authorized");
+    await expect(actions.applyBudgetDraft(event.id, form({
+      budgetDraft: JSON.stringify({
+        categories: [{ name: "Venue", amount: 10, basis: "One day", explanation: "Estimate", priority: "high", alternative: "" }],
+        contingency: 0,
+        rationale: "Planning estimate",
+        tradeOffs: [],
+      }),
+    }))).rejects.toThrow("not authorized");
 
     expect(await prisma.event.findUnique({ where: { id: event.id } })).not.toBeNull();
     expect(await prisma.expense.count({ where: { eventId: event.id } })).toBe(0);
@@ -285,6 +402,72 @@ describe("authorization isolation", () => {
     for (const page of readPages) {
       await expect(page({ params: Promise.resolve({ id: event.id }) })).rejects.toThrow("NOT_FOUND");
     }
+  });
+
+  it("requires authentication and event ownership for AI budget generation", async () => {
+    await createUser("owner");
+    await createUser("intruder");
+    const event = await createEvent("owner");
+    const request = new Request("http://localhost/api/budget/generate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ eventId: event.id }),
+    });
+
+    const anonymous = await generateBudgetHandler(request.clone());
+    expect(anonymous.status).toBe(401);
+
+    authState.userId = "intruder";
+    const unauthorized = await generateBudgetHandler(request.clone());
+    expect(unauthorized.status).toBe(404);
+  });
+
+  it("rate-limits repeated AI budget generation requests for an authenticated user", async () => {
+    await createUser("owner");
+    authState.userId = "owner";
+    vi.stubEnv("OPENAI_API_KEY", "server-test-key");
+    const providerResponse = {
+      choices: [{
+        message: {
+          content: JSON.stringify({
+            categories: [{
+              name: "Community space",
+              amount: 500,
+              basis: "One day",
+              explanation: "Indicative local estimate.",
+              priority: "high",
+              alternative: "",
+            }],
+            contingency: 50,
+            rationale: "Confirm all costs locally.",
+            tradeOffs: [],
+          }),
+        },
+      }],
+    };
+    const fetchMock = vi.fn().mockImplementation(
+      () => Promise.resolve(new Response(JSON.stringify(providerResponse), { status: 200 })),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const sendRequest = () => generateBudgetHandler(new Request("http://localhost/api/budget/generate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        eventType: "Community gathering",
+        location: "Pune",
+        guestCount: 20,
+        budget: 1_000,
+        currency: "INR",
+        date: "",
+        priorities: "",
+      }),
+    }));
+    const responses = [];
+    for (let attempt = 0; attempt < 6; attempt += 1) responses.push(await sendRequest());
+
+    expect(responses.map((response) => response.status)).toEqual([200, 200, 200, 200, 200, 429]);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
   });
 });
 

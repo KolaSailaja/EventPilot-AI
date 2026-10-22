@@ -10,6 +10,7 @@ type Props = {
   currency: string;
   eventType: string;
   vendorQuote: number;
+  allocations: Array<{ name: string; allocation: number }>;
 };
 
 const categoryBlueprint = [
@@ -26,6 +27,7 @@ export function EventWhatIfSimulator({
   currency,
   eventType,
   vendorQuote,
+  allocations,
 }: Props) {
   const clampNumeric = (value: number, fallback: number, minimum = 0) => {
     if (!Number.isFinite(value)) return fallback;
@@ -41,12 +43,22 @@ export function EventWhatIfSimulator({
   const guestImpact = guestCount - currentGuestCount;
 
   const categoryBreakdown = useMemo(
-    () => categoryBlueprint.map((category) => ({
-      ...category,
-      current: currentBudget * category.share,
-      projected: projectedBudget * category.share,
-    })),
-    [currentBudget, projectedBudget],
+    () => {
+      if (allocations.length > 0) {
+        return allocations.map((category) => ({
+          name: category.name,
+          current: category.allocation,
+          projected: currentBudget > 0 ? category.allocation * (projectedBudget / currentBudget) : 0,
+        }));
+      }
+
+      return categoryBlueprint.map((category) => ({
+        name: category.name,
+        current: currentBudget * category.share,
+        projected: projectedBudget * category.share,
+      }));
+    },
+    [allocations, currentBudget, projectedBudget],
   );
 
   const status = delta > 0 ? "Buffer under pressure" : delta < 0 ? "Savings created" : "Stable";
@@ -152,6 +164,7 @@ export function EventWhatIfSimulator({
               <span>{category.name}</span>
               <strong className="text-stone-900">{formatCurrency(category.projected, currency)}</strong>
             </div>
+            <p className="mt-1 text-xs text-stone-500">Current allocation: {formatCurrency(category.current, currency)}</p>
             <div className="mt-2 h-2 overflow-hidden rounded-full bg-stone-200">
               <div
                 className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-amber-400"

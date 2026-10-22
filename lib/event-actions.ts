@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 
 import { auth } from "@/auth";
 import { toSafeMoney } from "@/lib/budget";
+import { budgetDraftSchema, budgetProfileSchema } from "@/lib/budget-schema";
 import prisma from "@/lib/prisma";
 import {
   eventFormSchema,
@@ -101,6 +102,35 @@ export async function createEvent(formData: FormData) {
   }
 
   const safeBudget = toSafeMoney(parsed.data.budget, "Budget");
+  const budgetDraftValue = formData.get("budgetDraft");
+  let approvedBudgetDraft: ReturnType<typeof budgetDraftSchema.parse> | null = null;
+  if (typeof budgetDraftValue === "string" && budgetDraftValue) {
+    let draftInput: unknown;
+    let profileInput: unknown;
+    try {
+      draftInput = JSON.parse(budgetDraftValue);
+      profileInput = JSON.parse(String(formData.get("budgetDraftProfile") ?? ""));
+    } catch {
+      throw new Error("The approved budget draft is invalid. Generate and approve it again.");
+    }
+
+    const draft = budgetDraftSchema.safeParse(draftInput);
+    const profile = budgetProfileSchema.safeParse(profileInput);
+    if (!draft.success || !profile.success) {
+      throw new Error("The approved budget draft is invalid. Generate and approve it again.");
+    }
+    if (
+      profile.data.eventType !== parsed.data.type ||
+      profile.data.location !== (parsed.data.location || "") ||
+      profile.data.guestCount !== parsed.data.guestCount ||
+      profile.data.budget !== safeBudget ||
+      profile.data.currency !== parsed.data.currency ||
+      profile.data.date !== (parsed.data.date || "")
+    ) {
+      throw new Error("Event details changed after the budget was generated. Generate the budget again before saving.");
+    }
+    approvedBudgetDraft = draft.data;
+  }
 
   const event = await prisma.event.create({
     data: {
@@ -118,19 +148,132 @@ export async function createEvent(formData: FormData) {
       constraints: parsed.data.constraints || null,
       userId: user.id,
       categories: {
-        create: [
+        create: approvedBudgetDraft
+          ? [
+            ...approvedBudgetDraft.categories.map((category) => ({
+              name: category.name,
+              allocation: toSafeMoney(category.amount, "Category estimate"),
+              notes: [
+                `Indicative AI estimate; not a vendor quotation.`,
+                `Priority: ${category.priority}.`,
+                `Basis: ${category.basis}`,
+                category.explanation,
+                category.alternative ? `Lower-cost alternative: ${category.alternative}` : "",
+                approvedBudgetDraft?.rationale ?? "",
+                ...approvedBudgetDraft?.tradeOffs ?? [],
+              ].filter(Boolean).join("\n"),
+            })),
+            {
+              name: "Contingency",
+              allocation: toSafeMoney(approvedBudgetDraft.contingency, "Contingency"),
+              isContingency: true,
+              notes: "Indicative AI planning reserve; not a vendor quotation.",
+            },
+          ]
+          : [
           { name: "Venue", allocation: safeBudget * 0.25 },
           { name: "Catering", allocation: safeBudget * 0.3 },
           { name: "Decor", allocation: safeBudget * 0.15 },
           { name: "Entertainment", allocation: safeBudget * 0.15 },
           { name: "Contingency", allocation: safeBudget * 0.15, isContingency: true },
-        ],
+          ],
       },
     },
   });
 
   revalidatePath("/dashboard");
   redirect(`/events/${event.id}`);
+}
+
+export async function applyBudgetDraft(eventId: string, formData: FormData) {
+  await requireAuthorizedEvent(eventId);
+  const rawDraft = formData.get("budgetDraft");
+  if (typeof rawDraft !== "string" || !rawDraft) {
+    throw new Error("Review and approve the budget draft before applying it.");
+  }
+
+  let draftInput: unknown;
+  try {
+    draftInput = JSON.parse(rawDraft);
+  } catch {
+    throw new Error("The approved budget draft is invalid.");
+  }
+  const parsed = budgetDraftSchema.safeParse(draftInput);
+  if (!parsed.success) {
+    throw new Error(parsed.error.issues[0]?.message ?? "The approved budget draft is invalid.");
+  }
+
+  const draft = parsed.data;
+  await prisma.$transaction(async (transaction) => {
+    const existing = await transaction.budgetCategory.findMany({ where: { eventId } });
+    const remaining = new Map(existing.map((category) => [category.name.toLocaleLowerCase(), category]));
+    const savedNames = new Set<string>();
+
+    for (const category of draft.categories) {
+      const nameKey = category.name.toLocaleLowerCase();
+      savedNames.add(nameKey);
+      const notes = [
+        "Indicative planning estimate; not a verified vendor quotation.",
+        `Priority: ${category.priority}.`,
+        `Basis: ${category.basis}`,
+        category.explanation,
+        category.alternative ? `Lower-cost alternative: ${category.alternative}` : "",
+        draft.rationale,
+        ...draft.tradeOffs,
+      ].filter(Boolean).join("\n");
+      const matching = remaining.get(nameKey);
+      if (matching) {
+        await transaction.budgetCategory.update({
+          where: { id: matching.id },
+          data: { name: category.name, allocation: toSafeMoney(category.amount), notes, isContingency: false },
+        });
+      } else {
+        await transaction.budgetCategory.create({
+          data: { eventId, name: category.name, allocation: toSafeMoney(category.amount), notes },
+        });
+      }
+    }
+
+    const contingencyKey = "contingency";
+    savedNames.add(contingencyKey);
+    const existingContingency = remaining.get(contingencyKey);
+    if (existingContingency) {
+      await transaction.budgetCategory.update({
+        where: { id: existingContingency.id },
+        data: {
+          name: "Contingency",
+          allocation: toSafeMoney(draft.contingency),
+          notes: "Indicative AI planning reserve; not a vendor quotation.",
+          isContingency: true,
+        },
+      });
+    } else {
+      await transaction.budgetCategory.create({
+        data: {
+          eventId,
+          name: "Contingency",
+          allocation: toSafeMoney(draft.contingency),
+          notes: "Indicative AI planning reserve; not a vendor quotation.",
+          isContingency: true,
+        },
+      });
+    }
+
+    const obsoleteIds = existing
+      .filter((category) => !savedNames.has(category.name.toLocaleLowerCase()))
+      .map((category) => category.id);
+    if (obsoleteIds.length > 0) {
+      await transaction.expense.updateMany({
+        where: { eventId, categoryId: { in: obsoleteIds } },
+        data: { categoryId: null },
+      });
+      await transaction.budgetCategory.deleteMany({ where: { eventId, id: { in: obsoleteIds } } });
+    }
+  });
+
+  revalidatePath(`/events/${eventId}`);
+  revalidatePath(`/events/${eventId}/budget`);
+  revalidatePath(`/events/${eventId}/tasks`);
 }
 
 export async function addExpense(eventId: string, formData: FormData) {

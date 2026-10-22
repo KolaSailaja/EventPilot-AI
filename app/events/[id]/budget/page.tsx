@@ -1,6 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 
 import { auth } from "@/auth";
+import { BudgetGenerator } from "@/components/budget-generator";
 import { EventShell } from "@/components/event-shell";
 import { calculateBudgetSummary } from "@/lib/budget";
 import prisma from "@/lib/prisma";
@@ -25,6 +26,25 @@ export default async function BudgetPage({ params }: { params: Promise<{ id: str
     <main>
       <EventShell eventId={event.id} eventName={event.name} />
       <div className="mx-auto max-w-7xl px-4 pb-10">
+        <BudgetGenerator
+          mode="saved"
+          eventId={event.id}
+          profile={{
+            eventType: event.type,
+            location: event.location ?? "",
+            guestCount: event.guestCount,
+            budget: Number(event.budget),
+            currency: event.currency,
+            date: event.date?.toISOString().slice(0, 10) ?? "",
+            categories: event.categories.map((category) => ({
+              name: category.name,
+              allocation: Number(category.allocation),
+              notes: category.notes,
+              isContingency: category.isContingency,
+            })),
+          }}
+        />
+
         <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-4">
           <div className="card rounded-3xl p-5"><p className="text-sm text-stone-500">Total budget</p><p className="mt-3 text-3xl font-bold">{formatCurrency(Number(event.budget || 0), event.currency)}</p></div>
           <div className="card rounded-3xl p-5"><p className="text-sm text-stone-500">Actual spend</p><p className="mt-3 text-3xl font-bold">{formatCurrency(budgetSummary.actual, event.currency)}</p></div>
@@ -42,6 +62,9 @@ export default async function BudgetPage({ params }: { params: Promise<{ id: str
                     <span className="font-medium text-stone-700">{category.name}</span>
                     <span className="text-sm font-semibold">{formatCurrency(Number(category.allocation), event.currency)}</span>
                   </div>
+                  {category.notes && (
+                    <p className="mt-2 whitespace-pre-line text-xs leading-5 text-stone-500">{category.notes}</p>
+                  )}
                 </div>
               ))}
             </div>

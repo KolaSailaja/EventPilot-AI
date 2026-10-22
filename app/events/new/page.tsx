@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { auth } from "@/auth";
+import { BudgetGenerator, EventCreateSubmitButton } from "@/components/budget-generator";
 import { createEvent } from "@/lib/event-actions";
 
 export default async function NewEventPage() {
@@ -119,10 +120,10 @@ export default async function NewEventPage() {
           </div>
         </div>
 
+        <BudgetGenerator mode="new" />
+
         <div className="mt-8 flex justify-end">
-          <button type="submit" className="brand-emerald rounded-full px-6 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-900/10">
-            Save and open event
-          </button>
+          <EventCreateSubmitButton />
         </div>
       </form>
     </main>

@@ -41,6 +41,10 @@ EventPilot AI is an event-planning MVP built with Next.js App Router, TypeScript
 
 For a deployed environment, configure `DATABASE_URL`, `AUTH_SECRET`, and `NEXTAUTH_URL` in the hosting platform. Run `npm ci`, `npm run db:generate`, and `npm run db:deploy` during deployment. The default SQLite setup is intended for local/single-instance use. Horizontal scaling requires switching/migrating the schema to a shared database supported by Prisma and ensuring every instance uses that same database for persisted rate-limit counters.
 
+## AI budget estimates
+
+The budget generator uses OpenAI only when `OPENAI_API_KEY` is configured on the server (`OPENAI_MODEL` is optional). Without a key, the app reports that generation is unavailable rather than showing fabricated sample estimates. Generated figures are indicative estimates, not verified prices, vendor quotations, availability, or market research. Organizers can edit category details and amounts, enter actual quotations in the existing expense/vendor flows, and must explicitly approve a draft before it is saved as event category allocations.
+
 ## Validation
 
 ```powershell
@@ -54,7 +58,7 @@ npm run build
 
 ## Current implementation limits
 
-- AI Studio output is deterministic application-generated planning text, not a Gemini or other LLM integration.
+- The Vision-to-plan AI Studio output is deterministic application-generated planning text. The separate budget generator can use the configured OpenAI provider for editable indicative estimates.
 - Impact entries are pending manual review notes. There is no calculated proposal payload, approval/rejection, stale-proposal detection, or application of proposed changes.
 - Event, expense, task, vendor/quotation, guest, and RSVP flows currently create records; full edit/delete/status-update workflows are not implemented (event deletion is available).
 - Vendor quotations are stored separately from expenses and are not automatically included in actual spend or budget totals.
