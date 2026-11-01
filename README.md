@@ -4,7 +4,7 @@ EventPilot AI is an event-planning MVP built with Next.js App Router, TypeScript
 
 ## Requirements
 
-- Node.js 22 or a version supported by the installed Next.js release
+- Node.js 22.x (22.12 or later; enforced by `package.json` for deployment)
 - npm
 
 ## Local setup
