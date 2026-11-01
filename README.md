@@ -39,7 +39,25 @@ EventPilot AI is an event-planning MVP built with Next.js App Router, TypeScript
 
    Open <http://localhost:3000>.
 
-For a deployed environment, configure `DATABASE_URL`, `AUTH_SECRET`, and `NEXTAUTH_URL` in the hosting platform. Run `npm ci`, `npm run db:generate`, and `npm run db:deploy` during deployment. The default SQLite setup is intended for local/single-instance use. Horizontal scaling requires switching/migrating the schema to a shared database supported by Prisma and ensuring every instance uses that same database for persisted rate-limit counters.
+## Vercel deployment readiness
+
+Use Vercel's standard Next.js project detection; no custom `vercel.json` or static export is needed. In Vercel Project Settings, select the Next.js framework, set the Install Command to `npm ci`, the Build Command to `npm run build`, and the Node.js version to 22.x. The package engine also requires Node.js 22.12 or later. The repository uses npm and the committed `package-lock.json`; leave the output directory at its Next.js default.
+
+**The current SQLite configuration is not ready for production on Vercel.** `DATABASE_URL` defaults to `file:./dev.db`, and the Prisma schema uses SQLite. A database file in a deployment bundle or function filesystem is not a durable, shared production database; concurrent serverless instances also would not share the persisted login and registration rate-limit counters. Do not point a Vercel deployment at the checked-in `prisma/dev.db`.
+
+Before deploying, choose a persistent database. A budget-sensitive option to evaluate is a managed PostgreSQL provider such as Neon, subject to its current free-tier limits and region availability. Prisma supports PostgreSQL, but this project has not been migrated. A safe migration needs an approved backup/export of existing SQLite data, a reviewed PostgreSQL schema migration, data transfer and count/foreign-key validation, plus an update to the SQLite-specific SQL in `lib/rate-limit.ts`. Test the change against a staging database before applying production migrations. Do not run `db:deploy` against production as part of concurrent builds; run it once from a controlled release step after the migration is approved.
+
+Configure these Vercel environment variables for each environment that will build or run the app:
+
+| Variable | Requirement and purpose |
+| --- | --- |
+| `DATABASE_URL` | Required. Currently a local SQLite URL for development only; set this to the selected persistent database URL only after the database migration. |
+| `AUTH_SECRET` | Required. Auth initialization fails without it. Generate a unique, high-entropy secret and keep it server-side. |
+| `AUTH_URL` | Optional canonical application origin for Auth.js. If omitted, the app can use the request host; `NEXTAUTH_URL` is accepted as a legacy fallback. Set this to the production origin when you need an explicit canonical URL. |
+| `OPENAI_API_KEY` | Optional. Server-only key for AI budget generation; never use a `NEXT_PUBLIC_` prefix. |
+| `OPENAI_MODEL` | Optional. Model name for budget generation; defaults to `gpt-4o-mini`. |
+
+`NEXTAUTH_SECRET` is also accepted as a legacy fallback for `AUTH_SECRET`. The sample `NEXT_PUBLIC_APP_NAME` setting has been removed because the application does not read it.
 
 ## AI budget estimates
 
