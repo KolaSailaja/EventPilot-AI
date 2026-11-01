@@ -8,6 +8,7 @@ export const budgetProfileSchema = z.object({
   guestCount: z.number().int().min(1).max(1_000_000),
   budget: z.number().finite().min(0).max(1_000_000_000_000),
   currency: z.enum(["INR", "USD", "AED", "EUR"]),
+  context: z.string().trim().max(4_000).default(""),
   date: z.string().max(10).refine((value) => {
     if (value === "") return true;
     if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;

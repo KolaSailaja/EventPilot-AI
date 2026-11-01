@@ -2,7 +2,7 @@ import { notFound, redirect } from "next/navigation";
 
 import { auth } from "@/auth";
 import { EventShell } from "@/components/event-shell";
-import { addVendor } from "@/lib/event-actions";
+import { addVendor, deleteVendor } from "@/lib/event-actions";
 import prisma from "@/lib/prisma";
 import { formatCurrency } from "@/lib/utils";
 
@@ -54,7 +54,12 @@ export default async function VendorsPage({ params }: { params: Promise<{ id: st
                     <p className="text-lg font-bold text-stone-900">{vendor.name}</p>
                     <p className="text-sm text-stone-500">{vendor.category}</p>
                   </div>
-                  <span className="rounded-full bg-stone-100 px-2.5 py-1 text-xs font-bold uppercase tracking-[0.12em] text-stone-700">{vendor.status}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="rounded-full bg-stone-100 px-2.5 py-1 text-xs font-bold uppercase tracking-[0.12em] text-stone-700">{vendor.status}</span>
+                    <form action={deleteVendor.bind(null, event.id, vendor.id)}>
+                      <button type="submit" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">Delete</button>
+                    </form>
+                  </div>
                 </div>
                 <div className="mt-4 space-y-2 text-sm text-stone-600">
                   {vendor.quotations.map((quote) => (

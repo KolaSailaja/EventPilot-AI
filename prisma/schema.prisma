@@ -197,6 +197,7 @@ model ChangeProposal {
   kind       String
   summary    String
   impactText String
+  proposalData String?
   status     String   @default("pending")
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt

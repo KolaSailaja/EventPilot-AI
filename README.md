@@ -43,7 +43,9 @@ For a deployed environment, configure `DATABASE_URL`, `AUTH_SECRET`, and `NEXTAU
 
 ## AI budget estimates
 
-The budget generator uses OpenAI only when `OPENAI_API_KEY` is configured on the server (`OPENAI_MODEL` is optional). Without a key, the app reports that generation is unavailable rather than showing fabricated sample estimates. Generated figures are indicative estimates, not verified prices, vendor quotations, availability, or market research. Organizers can edit category details and amounts, enter actual quotations in the existing expense/vendor flows, and must explicitly approve a draft before it is saved as event category allocations.
+The budget generator uses OpenAI only when `OPENAI_API_KEY` is configured on the server (`OPENAI_MODEL` is optional). New-event requests include the organizer's event brief; saved-event requests load the persisted constraints, notes, allocations, spend, tasks, RSVP counts, and quote amounts. Without a key, generation reports that it is unavailable rather than showing fabricated estimates; organizers can still use the saved allocations and manual budget editing. Generated figures are indicative estimates, not verified prices, vendor quotations, availability, or market research. Organizers can edit category details and amounts and must explicitly approve a draft before it is saved as event category allocations.
+
+The Vision-to-plan Studio is deterministic application logic, not an LLM integration. It uses saved event details, open tasks, RSVP follow-ups, vendor status, organizer inputs, and constraints to produce reviewable planning notes. The What-If workflow calculates a budget-target and guest-count proposal from the persisted event, records its baseline, and supports explicit approval/application or rejection. Applying a proposal changes only the event budget target and guest count; it does not change expenses, quotes, or category allocations. A proposal is marked stale and cannot be applied if either baseline value has changed.
 
 ## Validation
 
@@ -58,8 +60,8 @@ npm run build
 
 ## Current implementation limits
 
-- The Vision-to-plan AI Studio output is deterministic application-generated planning text. The separate budget generator can use the configured OpenAI provider for editable indicative estimates.
-- Impact entries are pending manual review notes. There is no calculated proposal payload, approval/rejection, stale-proposal detection, or application of proposed changes.
+- The Vision-to-plan AI Studio output and What-If impact calculations are deterministic. Only budget generation calls the configured OpenAI provider.
+- Manual impact notes remain notes; structured What-If proposals cover only the budget target and guest count. They do not update tasks, quotes, expenses, or category allocations.
 - Event, expense, task, vendor/quotation, guest, and RSVP flows currently create records; full edit/delete/status-update workflows are not implemented (event deletion is available).
 - Vendor quotations are stored separately from expenses and are not automatically included in actual spend or budget totals.
 - The export screen is an owner-protected printable summary. It does not generate a downloadable file.

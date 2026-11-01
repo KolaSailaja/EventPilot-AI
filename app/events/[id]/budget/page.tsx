@@ -28,6 +28,7 @@ export default async function BudgetPage({ params }: { params: Promise<{ id: str
       <div className="mx-auto max-w-7xl px-4 pb-10">
         <BudgetGenerator
           mode="saved"
+          aiConfigured={Boolean(process.env.OPENAI_API_KEY)}
           eventId={event.id}
           profile={{
             eventType: event.type,

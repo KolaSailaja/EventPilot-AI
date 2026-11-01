@@ -2,11 +2,20 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { z } from "zod";
 
 import { auth } from "@/auth";
+import { buildEventBudgetContext } from "@/lib/budget-context";
 import { toSafeMoney } from "@/lib/budget";
 import { budgetDraftSchema, budgetProfileSchema } from "@/lib/budget-schema";
 import prisma from "@/lib/prisma";
+import {
+  calculateScenarioImpact,
+  scenarioFormSchema,
+  parseScenarioProposal,
+  scenarioProposalSchema,
+} from "@/lib/scenario";
+import { formatCurrency } from "@/lib/utils";
 import {
   eventFormSchema,
   expenseSchema,
@@ -52,7 +61,23 @@ function normalizeConceptValue(value: FormDataEntryValue | null | undefined, fal
   return raw || fallback;
 }
 
-function buildVisionPlanContent(event: { name: string; type: string; currency: string; budget: number; guestCount: number; theme?: string | null; style?: string | null; constraints?: string | null; }, concept: {
+function buildVisionPlanContent(event: {
+  name: string;
+  type: string;
+  currency: string;
+  budget: number;
+  guestCount: number;
+  date: Date | null;
+  location: string | null;
+  description: string | null;
+  notes: string | null;
+  theme: string | null;
+  style: string | null;
+  constraints: string | null;
+  tasks: Array<{ title: string; status: string; dueDate: Date | null }>;
+  guests: Array<{ rsvp: { status: string } | null }>;
+  vendors: Array<{ name: string; category: string; status: string; quotations: Array<{ isConfirmed: boolean }> }>;
+}, concept: {
   mood: string;
   palette: string;
   lighting: string;
@@ -64,15 +89,31 @@ function buildVisionPlanContent(event: { name: string; type: string; currency: s
   budgetStrategy: string;
   tradeOffs: string;
 }) {
+  const openTasks = event.tasks
+    .filter((task) => task.status !== "done")
+    .slice(0, 5)
+    .map((task) => `${task.title} (${task.status}${task.dueDate ? `, due ${task.dueDate.toISOString().slice(0, 10)}` : ""})`);
+  const pendingRsvps = event.guests.filter((guest) => !guest.rsvp || guest.rsvp.status === "pending").length;
+  const vendorFollowUps = event.vendors
+    .filter((vendor) => vendor.status !== "booked" || vendor.quotations.some((quote) => !quote.isConfirmed))
+    .slice(0, 5)
+    .map((vendor) => `${vendor.name} — ${vendor.category} (${vendor.status})`);
+  const scheduleContext = event.date
+    ? `Event date: ${event.date.toISOString().slice(0, 10)}`
+    : "Event date is not set; use relative milestones rather than calendar dates.";
+
   return [
+    `Saved event brief\n- ${event.name} is a ${event.type}${event.location ? ` in ${event.location}` : ""} for ${event.guestCount} guests${event.date ? ` on ${event.date.toISOString().slice(0, 10)}` : ""}.\n- ${event.description || "No description saved."}\n- Organizer notes: ${event.notes || "none"}\n- Constraints: ${event.constraints || "none saved."}` ,
     `Theme and visual direction\n- ${concept.mood || event.theme || event.style || `${event.type} styling`}. Keep the overall tone elevated and practical, with a polished editorial feel that still reads as a real event plan.`,
     `Color palette\n- ${concept.palette || "Warm ivory + forest green + brushed gold"}. This keeps the plan premium and versatile across hospitality, décor, staging, and signage.`,
     `Decoration and lighting ideas\n- ${concept.lighting || "Layer ambient lighting with statement focal points, using greenery and candles or warm uplighting to deepen the atmosphere without overloading the room."}`,
     `Activities and entertainment\n- ${concept.activities || "Design a clear flow of arrival, guided activities, and downtime to keep the event engaging and manageable for the guest count."}`,
-    `Draft event schedule\n- ${concept.schedule || "Arrive early for vendor setup, set a calm welcome window, begin main programming on time, and reserve a flexible wind-down block for transitions or delays."}`,
+    `Menu and hospitality\n- ${concept.menu || "Plan service style and dietary collection around the guest count and venue setup; confirm menu choices and service timing with the caterer."}`,
+    `Accessibility and guest comfort\n- ${concept.accessibility || "Confirm step-free access, seating, clear signage, dietary needs, and a quiet area with the venue before finalizing the run sheet."}`,
+    `Draft event schedule\n- ${concept.schedule || "Work backward from the event date: confirm key vendors and access first, finalize guest and menu details next, then schedule setup, arrival, main programming, transitions, and a contingency buffer."}\n- ${scheduleContext}`,
     `Budget allocation\n- ${concept.budgetStrategy || `Protect the ${event.currency} ${event.budget.toLocaleString()} budget by prioritizing venue, hospitality, and comfort first, then allocate contingency for last-minute changes.`} Keep the guest count around ${event.guestCount} while preserving room for practical extras.`,
-    `Vendor categories and selection criteria\n- Shortlist venue, hospitality, décor, sound and AV, and guest experience contacts. Evaluate them by trust, communication, fit with the event’s tone, lead time, and responsiveness before using any quote as a final decision.`,
-    `Actionable planning tasks\n- ${concept.constraints || event.constraints || "List key decisions for venue access, signage, menu confirmations, staffing, RSVP follow-up, and a final run-through review."}\n- Confirm accessibility support and guest comfort items early.\n- Reserve a dedicated buffer for setup, guest flow, and contingency.`,
+    `Vendor follow-up\n- ${vendorFollowUps.join("; ") || "No outstanding vendor follow-ups are recorded. Confirm venue, hospitality, and technical requirements before booking."}\n- Evaluate vendors by fit, lead time, written scope, and responsiveness. Quotes remain separate from actual spend until recorded as expenses.`,
+    `Recommended next actions\n- ${openTasks.join("; ") || "No open tasks are saved yet. Add venue access confirmation, menu and dietary checks, and a final run-through to the task list."}\n- ${pendingRsvps} guest response${pendingRsvps === 1 ? "" : "s"} still pending; schedule an RSVP follow-up.\n- ${concept.constraints || event.constraints || "Confirm the venue access window and staffing plan."}\n- Reserve a setup, guest-flow, and contingency buffer.`,
     `Alternatives for different budgets\n- ${concept.tradeOffs || "If the budget tightens, trim décor density before reducing hospitality or guest comfort. If the budget opens up, increase lighting, add lounge or activity layers, and preserve a contingency reserve."}`,
   ].join("\n\n");
 }
@@ -125,7 +166,15 @@ export async function createEvent(formData: FormData) {
       profile.data.guestCount !== parsed.data.guestCount ||
       profile.data.budget !== safeBudget ||
       profile.data.currency !== parsed.data.currency ||
-      profile.data.date !== (parsed.data.date || "")
+      profile.data.date !== (parsed.data.date || "") ||
+      profile.data.context !== buildEventBudgetContext({
+        name: parsed.data.name,
+        theme: parsed.data.theme ?? "",
+        style: parsed.data.style ?? "",
+        description: parsed.data.description ?? "",
+        notes: parsed.data.notes ?? "",
+        constraints: parsed.data.constraints ?? "",
+      })
     ) {
       throw new Error("Event details changed after the budget was generated. Generate the budget again before saving.");
     }
@@ -438,7 +487,14 @@ export async function addVendor(eventId: string, formData: FormData) {
 
 export async function generateVisionPlan(eventId: string, formData: FormData) {
   const { user } = await requireAuthorizedEvent(eventId);
-  const event = await prisma.event.findUniqueOrThrow({ where: { id: eventId } });
+  const event = await prisma.event.findUniqueOrThrow({
+    where: { id: eventId },
+    include: {
+      tasks: { orderBy: { dueDate: "asc" } },
+      guests: { include: { rsvp: true } },
+      vendors: { include: { quotations: true } },
+    },
+  });
 
   const concept = planConceptSchema.safeParse({
     mood: formData.get("mood") ?? event.style ?? event.theme ?? "",
@@ -486,6 +542,7 @@ export async function generateVisionPlan(eventId: string, formData: FormData) {
 }
 
 export async function createPlanSection(eventId: string) {
+  await requireAuthorizedEvent(eventId);
   const event = await prisma.event.findUniqueOrThrow({ where: { id: eventId } });
   const formData = new FormData();
   formData.set("title", `${event.type} vision plan`);
@@ -522,6 +579,80 @@ export async function updateTaskStatus(eventId: string, taskId: string, formData
   revalidatePath(`/events/${eventId}/tasks`);
 }
 
+export async function deleteTask(eventId: string, taskId: string) {
+  await requireAuthorizedEvent(eventId);
+
+  const task = await prisma.task.findFirst({ where: { id: taskId, eventId }, select: { id: true } });
+  if (!task) {
+    throw new Error("Task not found for this event.");
+  }
+
+  await prisma.task.delete({ where: { id: taskId } });
+  revalidatePath(`/events/${eventId}`);
+  revalidatePath(`/events/${eventId}/tasks`);
+}
+
+export async function deleteExpense(eventId: string, expenseId: string) {
+  await requireAuthorizedEvent(eventId);
+
+  const expense = await prisma.expense.findFirst({ where: { id: expenseId, eventId }, select: { id: true } });
+  if (!expense) {
+    throw new Error("Expense not found for this event.");
+  }
+
+  await prisma.expense.delete({ where: { id: expenseId } });
+  revalidatePath(`/events/${eventId}`);
+  revalidatePath(`/events/${eventId}/budget`);
+}
+
+export async function updateRsvpStatus(eventId: string, guestId: string, formData: FormData) {
+  await requireAuthorizedEvent(eventId);
+
+  const status = z.enum(["pending", "attending", "declined", "maybe"]).safeParse(formData.get("status"));
+  if (!status.success) {
+    throw new Error(status.error.issues[0]?.message ?? "Select a valid RSVP status.");
+  }
+
+  const guest = await prisma.guest.findFirst({ where: { id: guestId, eventId }, select: { id: true } });
+  if (!guest) {
+    throw new Error("Guest not found for this event.");
+  }
+
+  await prisma.rSVP.upsert({
+    where: { guestId },
+    update: { status: status.data, respondedAt: new Date() },
+    create: { guestId, status: status.data, respondedAt: new Date() },
+  });
+  revalidatePath(`/events/${eventId}`);
+  revalidatePath(`/events/${eventId}/guests`);
+}
+
+export async function deleteGuest(eventId: string, guestId: string) {
+  await requireAuthorizedEvent(eventId);
+
+  const guest = await prisma.guest.findFirst({ where: { id: guestId, eventId }, select: { id: true } });
+  if (!guest) {
+    throw new Error("Guest not found for this event.");
+  }
+
+  await prisma.guest.delete({ where: { id: guestId } });
+  revalidatePath(`/events/${eventId}`);
+  revalidatePath(`/events/${eventId}/guests`);
+}
+
+export async function deleteVendor(eventId: string, vendorId: string) {
+  await requireAuthorizedEvent(eventId);
+
+  const vendor = await prisma.vendor.findFirst({ where: { id: vendorId, eventId }, select: { id: true } });
+  if (!vendor) {
+    throw new Error("Vendor not found for this event.");
+  }
+
+  await prisma.vendor.delete({ where: { id: vendorId } });
+  revalidatePath(`/events/${eventId}`);
+  revalidatePath(`/events/${eventId}/vendors`);
+}
+
 export async function saveProposal(eventId: string, payload: { kind: string; summary: string; impactText: string }) {
   await requireAuthorizedEvent(eventId);
   const parsed = reviewNoteSchema.safeParse(payload);
@@ -538,6 +669,119 @@ export async function saveProposal(eventId: string, payload: { kind: string; sum
       status: "pending",
     },
   });
+
+  revalidatePath(`/events/${eventId}/impact`);
+}
+
+export async function saveScenarioProposal(eventId: string, formData: FormData) {
+  await requireAuthorizedEvent(eventId);
+  const parsed = scenarioFormSchema.safeParse({
+    budget: formData.get("budget"),
+    guestCount: formData.get("guestCount"),
+  });
+  if (!parsed.success) {
+    throw new Error(parsed.error.issues[0]?.message ?? "Enter a valid budget and guest count.");
+  }
+
+  const event = await prisma.event.findUniqueOrThrow({ where: { id: eventId } });
+  const scenario = scenarioProposalSchema.parse({
+    version: 1,
+    baseline: {
+      budget: toSafeMoney(event.budget, "Current budget"),
+      guestCount: event.guestCount,
+    },
+    proposed: {
+      budget: toSafeMoney(parsed.data.budget, "Proposed budget"),
+      guestCount: parsed.data.guestCount,
+    },
+  });
+  const impact = calculateScenarioImpact(scenario);
+  const budgetChange = impact.budgetDelta === 0
+    ? "no change"
+    : `${impact.budgetDelta > 0 ? "+" : "-"}${formatCurrency(Math.abs(impact.budgetDelta), event.currency)}`;
+  const guestChange = impact.guestDelta === 0
+    ? "no change"
+    : `${impact.guestDelta > 0 ? "+" : ""}${impact.guestDelta}`;
+  const impactText = [
+    `Budget target: ${formatCurrency(scenario.baseline.budget, event.currency)} → ${formatCurrency(scenario.proposed.budget, event.currency)} (${budgetChange}).`,
+    `Guest count: ${scenario.baseline.guestCount} → ${scenario.proposed.guestCount} (${guestChange}).`,
+    `Budget per planned guest: ${formatCurrency(impact.currentBudgetPerGuest, event.currency)} → ${formatCurrency(impact.proposedBudgetPerGuest, event.currency)}.`,
+    "Approval changes only the event budget target and guest count. Expenses, vendor quotations, and category allocations are not changed.",
+  ].join("\n");
+
+  await prisma.changeProposal.create({
+    data: {
+      eventId,
+      kind: "what-if-scenario",
+      summary: `Scenario: ${formatCurrency(scenario.proposed.budget, event.currency)} budget for ${scenario.proposed.guestCount} guests`,
+      impactText,
+      proposalData: JSON.stringify(scenario),
+      status: "pending",
+    },
+  });
+  revalidatePath(`/events/${eventId}/impact`);
+}
+
+export async function approveAndApplyScenario(eventId: string, proposalId: string) {
+  await requireAuthorizedEvent(eventId);
+
+  await prisma.$transaction(async (transaction) => {
+    const proposal = await transaction.changeProposal.findFirst({
+      where: { id: proposalId, eventId, kind: "what-if-scenario" },
+    });
+    if (!proposal || proposal.status !== "pending") {
+      throw new Error("This scenario is not available for approval.");
+    }
+
+    const scenario = parseScenarioProposal(proposal.proposalData);
+    if (!scenario) {
+      throw new Error("This scenario is invalid. Create a new proposal.");
+    }
+
+    const update = await transaction.event.updateMany({
+      where: {
+        id: eventId,
+        budget: scenario.baseline.budget,
+        guestCount: scenario.baseline.guestCount,
+      },
+      data: {
+        budget: scenario.proposed.budget,
+        guestCount: scenario.proposed.guestCount,
+      },
+    });
+
+    if (update.count !== 1) {
+      await transaction.changeProposal.update({
+        where: { id: proposal.id },
+        data: { status: "stale" },
+      });
+      return;
+    }
+
+    const markedApproved = await transaction.changeProposal.updateMany({
+      where: { id: proposal.id, eventId, status: "pending" },
+      data: { status: "approved" },
+    });
+    if (markedApproved.count !== 1) {
+      throw new Error("This scenario has already been reviewed.");
+    }
+
+  });
+
+  revalidatePath(`/events/${eventId}`);
+  revalidatePath(`/events/${eventId}/impact`);
+}
+
+export async function rejectScenarioProposal(eventId: string, proposalId: string) {
+  await requireAuthorizedEvent(eventId);
+
+  const result = await prisma.changeProposal.updateMany({
+    where: { id: proposalId, eventId, kind: "what-if-scenario", status: "pending" },
+    data: { status: "rejected" },
+  });
+  if (result.count !== 1) {
+    throw new Error("This scenario is no longer pending review.");
+  }
 
   revalidatePath(`/events/${eventId}/impact`);
 }

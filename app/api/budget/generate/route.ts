@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { auth } from "@/auth";
+import { calculateBudgetSummary } from "@/lib/budget";
 import prisma from "@/lib/prisma";
 import { BudgetProviderError, generateBudgetWithAI } from "@/lib/ai-budget-provider";
 import { budgetProfileSchema } from "@/lib/budget-schema";
@@ -70,16 +71,44 @@ export async function POST(request: Request) {
   if (typeof requestData.eventId === "string") {
     const event = await prisma.event.findUnique({
       where: { id: requestData.eventId },
+      include: {
+        categories: { orderBy: { name: "asc" } },
+        expenses: true,
+        tasks: { orderBy: { dueDate: "asc" }, take: 8 },
+        guests: { include: { rsvp: true } },
+        vendors: { include: { quotations: true } },
+      },
     });
     if (!event || event.userId !== userId) {
       return NextResponse.json({ error: "Event not found." }, { status: 404 });
     }
+    const budgetSummary = calculateBudgetSummary(event.budget, event.expenses);
+    const rsvpCounts = event.guests.reduce<Record<string, number>>((counts, guest) => {
+      const status = guest.rsvp?.status ?? "pending";
+      counts[status] = (counts[status] ?? 0) + 1;
+      return counts;
+    }, {});
+    const existingQuotes = event.vendors.flatMap((vendor) => vendor.quotations)
+      .map((quote) => `${quote.currency} ${quote.amount}${quote.isConfirmed ? " confirmed" : " estimate"}`);
+    const context = [
+      `Event: ${event.name}`,
+      `Theme: ${event.theme || "not specified"}; style: ${event.style || "not specified"}.`,
+      `Description: ${event.description || "not provided"}`,
+      `Planning notes: ${event.notes || "none"}`,
+      `Constraints: ${event.constraints || "none specified"}`,
+      `Existing category allocations: ${event.categories.map((category) => `${category.name} ${event.currency} ${category.allocation}`).join("; ") || "none"}`,
+      `Recorded spend: ${event.currency} ${budgetSummary.actual} actual and ${event.currency} ${budgetSummary.planned} planned.`,
+      `Guest RSVP counts: ${Object.entries(rsvpCounts).map(([status, count]) => `${status} ${count}`).join(", ") || "no guests recorded"}`,
+      `Existing tasks: ${event.tasks.map((task) => `${task.title} (${task.status}${task.dueDate ? `, due ${task.dueDate.toISOString().slice(0, 10)}` : ""})`).join("; ") || "none"}`,
+      `Recorded vendor quote amounts by quote currency: ${existingQuotes.join("; ") || "none"}`,
+    ].join("\n").slice(0, 4_000);
     profileInput = {
       eventType: event.type,
       location: event.location ?? "",
       guestCount: event.guestCount,
       budget: event.budget,
       currency: event.currency,
+      context,
       date: event.date?.toISOString().slice(0, 10) ?? "",
       priorities: requestData.priorities ?? "",
     };

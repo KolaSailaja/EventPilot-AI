@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useFormStatus } from "react-dom";
 
 import { applyBudgetDraft } from "@/lib/event-actions";
+import { buildEventBudgetContext } from "@/lib/budget-context";
 import { budgetDraftSchema, summarizeBudgetDraft, type BudgetDraft } from "@/lib/budget-schema";
 import { formatCurrency } from "@/lib/utils";
 
@@ -23,8 +24,8 @@ type EventProfile = {
 };
 
 type Props =
-  | { mode: "new"; eventId?: never; profile?: never }
-  | { mode: "saved"; eventId: string; profile: EventProfile };
+  | { mode: "new"; aiConfigured: boolean; eventId?: never; profile?: never }
+  | { mode: "saved"; aiConfigured: boolean; eventId: string; profile: EventProfile };
 
 function ApplyButton({ disabled }: { disabled: boolean }) {
   const { pending } = useFormStatus();
@@ -132,6 +133,14 @@ export function BudgetGenerator(props: Props) {
           currency: data.get("currency") ?? "INR",
           date: data.get("date") ?? "",
           priorities,
+          context: buildEventBudgetContext({
+            name: String(data.get("name") ?? ""),
+            theme: String(data.get("theme") ?? ""),
+            style: String(data.get("style") ?? ""),
+            description: String(data.get("description") ?? ""),
+            notes: String(data.get("notes") ?? ""),
+            constraints: String(data.get("constraints") ?? ""),
+          }),
         };
         setNewEventBudget(Number(payload.budget));
         setNewEventCurrency(String(payload.currency));
@@ -204,6 +213,11 @@ export function BudgetGenerator(props: Props) {
       <p className="mt-3 text-xs leading-5 text-stone-600">
         These are indicative AI estimates, not verified prices or vendor quotations. Confirm actual costs directly with vendors.
       </p>
+      {!props.aiConfigured && (
+        <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+          AI budget suggestions are unavailable until the server has an <code>OPENAI_API_KEY</code>. You can still use the existing allocations and edit a saved draft manually.
+        </p>
+      )}
 
       {error && (
         <p role="alert" className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</p>

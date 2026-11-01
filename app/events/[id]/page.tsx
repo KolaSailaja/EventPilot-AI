@@ -33,11 +33,6 @@ export default async function EventPage({ params }: { params: Promise<{ id: stri
   }
 
   const budgetSummary = calculateBudgetSummary(event.budget, event.expenses);
-  const vendorQuoteTotal = event.vendors.reduce(
-    (sum, vendor) => sum + vendor.quotations.reduce((quoteSum, quotation) => quoteSum + Number(quotation.amount || 0), 0),
-    0,
-  );
-
   return (
     <main className="mx-auto max-w-7xl px-4 py-6 lg:px-6">
       <EventShell eventId={event.id} eventName={event.name} />
@@ -72,15 +67,12 @@ export default async function EventPage({ params }: { params: Promise<{ id: stri
           </section>
 
           <EventWhatIfSimulator
+            eventId={event.id}
             currentBudget={Number(event.budget || 0)}
             currentGuestCount={event.guestCount}
+            actualSpend={budgetSummary.actual}
             currency={event.currency}
             eventType={event.type}
-            vendorQuote={vendorQuoteTotal}
-            allocations={event.categories.map((category) => ({
-              name: category.name,
-              allocation: Number(category.allocation),
-            }))}
           />
 
           <section className="surface rounded-[30px] p-6">

@@ -8,12 +8,6 @@ import prisma from "@/lib/prisma";
 export default async function AIPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const session = await auth();
-  const aiProviderConfigured = Boolean(
-    process.env.OPENAI_API_KEY ||
-      process.env.ANTHROPIC_API_KEY ||
-      process.env.GEMINI_API_KEY ||
-      process.env.OPENROUTER_API_KEY,
-  );
 
   if (!session?.user?.id) redirect("/sign-in");
 
@@ -39,11 +33,9 @@ export default async function AIPage({ params }: { params: Promise<{ id: string 
           </form>
         </div>
 
-        {!aiProviderConfigured ? (
-          <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-            No external AI provider is configured. This studio generates a deterministic event concept from the saved event data and organizer inputs, and it clearly labels the output as planning guidance rather than a confirmed vendor or pricing recommendation.
-          </div>
-        ) : null}
+        <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          This studio creates deterministic planning guidance from saved event details and your inputs; it does not call an LLM. The separate budget generator uses OpenAI only when <code>OPENAI_API_KEY</code> is configured. Neither feature verifies prices or vendor availability.
+        </div>
 
         <form action={generateVisionPlan.bind(null, event.id)} className="mt-6 grid gap-4 md:grid-cols-2">
           <label className="field-block md:col-span-2">

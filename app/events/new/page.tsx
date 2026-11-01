@@ -120,7 +120,7 @@ export default async function NewEventPage() {
           </div>
         </div>
 
-        <BudgetGenerator mode="new" />
+        <BudgetGenerator mode="new" aiConfigured={Boolean(process.env.OPENAI_API_KEY)} />
 
         <div className="mt-8 flex justify-end">
           <EventCreateSubmitButton />

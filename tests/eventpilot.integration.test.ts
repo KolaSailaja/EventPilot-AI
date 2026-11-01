@@ -3,6 +3,8 @@ import { existsSync, unlinkSync } from "node:fs";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { buildEventBudgetContext } from "@/lib/budget-context";
+
 const authState = vi.hoisted(() => ({ userId: null as string | null }));
 
 vi.mock("@/auth", () => ({
@@ -181,6 +183,14 @@ describe("database-backed event workflows", () => {
       currency: "INR",
       date: "2026-11-08",
       priorities: "",
+      context: buildEventBudgetContext({
+        name: "Community festival",
+        theme: "",
+        style: "",
+        description: "",
+        notes: "",
+        constraints: "",
+      }),
     };
 
     await expect(actions.createEvent(form({
@@ -204,6 +214,61 @@ describe("database-backed event workflows", () => {
     expect(event.categories.reduce((sum, category) => sum + category.allocation, 0)).toBe(900);
   });
 
+  it("rejects an approved new-event budget after its planning context changes", async () => {
+    await createUser("owner");
+    authState.userId = "owner";
+
+    const originalContext = buildEventBudgetContext({
+      name: "Community festival",
+      theme: "Local arts",
+      style: "Outdoor",
+      description: "An arts day for the neighborhood.",
+      notes: "Prioritize local caterers.",
+      constraints: "Step-free access.",
+    });
+    const draft = {
+      categories: [{
+        name: "Community space",
+        amount: 800,
+        basis: "One-day local venue",
+        explanation: "Indicative estimate.",
+        priority: "high",
+        alternative: "Public park",
+      }],
+      contingency: 100,
+      rationale: "Confirm costs directly.",
+      tradeOffs: [],
+    };
+    const profile = {
+      eventType: "Festival",
+      location: "Pune",
+      guestCount: 40,
+      budget: 1_000,
+      currency: "INR",
+      date: "2026-11-08",
+      priorities: "",
+      context: originalContext,
+    };
+
+    await expect(actions.createEvent(form({
+      name: "Community festival",
+      type: "Festival",
+      date: "2026-11-08",
+      location: "Pune",
+      guestCount: "40",
+      budget: "1000",
+      currency: "INR",
+      theme: "Local arts",
+      style: "Outdoor",
+      description: "An arts day for the neighborhood.",
+      notes: "Prioritize local caterers.",
+      constraints: "Step-free access and vegetarian meals.",
+      budgetDraft: JSON.stringify(draft),
+      budgetDraftProfile: JSON.stringify(profile),
+    }))).rejects.toThrow("Event details changed after the budget was generated");
+    await expect(prisma.event.count({ where: { userId: "owner" } })).resolves.toBe(0);
+  });
+
   it("does not persist generated drafts until approval, and applying twice does not duplicate categories", async () => {
     await createUser("owner");
     const event = await createEvent("owner");
@@ -213,9 +278,23 @@ describe("database-backed event workflows", () => {
     const expense = await prisma.expense.create({
       data: { eventId: event.id, categoryId: oldCategory.id, title: "Paid deposit", amount: 25, isActual: true },
     });
+    await prisma.event.update({
+      where: { id: event.id },
+      data: {
+        theme: "Community colors",
+        style: "Accessible and relaxed",
+        description: "An outdoor community arts festival.",
+        notes: "Prioritize local caterers.",
+        constraints: "Step-free access and vegetarian meals.",
+      },
+    });
+    await prisma.task.create({ data: { eventId: event.id, title: "Confirm step-free venue", status: "pending" } });
     authState.userId = "owner";
     vi.stubEnv("OPENAI_API_KEY", "server-test-key");
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+    let providerRequestBody = "";
+    vi.stubGlobal("fetch", vi.fn((_input: unknown, init?: RequestInit) => {
+      providerRequestBody = String(init?.body ?? "");
+      return Promise.resolve(new Response(JSON.stringify({
       choices: [{
         message: {
           content: JSON.stringify({
@@ -233,7 +312,8 @@ describe("database-backed event workflows", () => {
           }),
         },
       }],
-    }), { status: 200 })));
+      }), { status: 200 }));
+    }));
 
     const generated = await generateBudgetHandler(new Request("http://localhost/api/budget/generate", {
       method: "POST",
@@ -241,6 +321,11 @@ describe("database-backed event workflows", () => {
       body: JSON.stringify({ eventId: event.id, priorities: "simple food" }),
     }));
     expect(generated.status).toBe(200);
+    const providerPayload = JSON.parse(providerRequestBody) as { messages: Array<{ content: string }> };
+    expect(providerPayload.messages[1]?.content).toContain("Step-free access and vegetarian meals");
+    expect(providerPayload.messages[1]?.content).toContain("Community colors");
+    expect(providerPayload.messages[1]?.content).toContain("Confirm step-free venue");
+    expect(providerPayload.messages[1]?.content).toContain("INR 25 actual");
     expect(await prisma.budgetCategory.count({ where: { eventId: event.id } })).toBe(1);
 
     const approvedDraft = JSON.parse(await generated.text()).draft;
@@ -301,7 +386,92 @@ describe("database-backed event workflows", () => {
     expect(persisted.vendors[0]?.quotations[0]?.amount).toBe(450.25);
     expect(persisted.vendors.find((vendor) => vendor.name === "Unpriced venue")?.quotations).toHaveLength(0);
     expect(persisted.planSections).toHaveLength(1);
+    expect(persisted.planSections[0]?.content).toContain("Menu and hospitality");
+    expect(persisted.planSections[0]?.content).toContain("Accessibility and guest comfort");
+    expect(persisted.planSections[0]?.content).toContain("Confirm venue");
+    expect(persisted.planSections[0]?.content).toContain("1 guest response still pending");
     expect(persisted.proposals[0]?.status).toBe("pending");
+  });
+
+  it("creates, approves, rejects, and marks stale What-If scenario proposals", async () => {
+    await createUser("owner");
+    const event = await createEvent("owner");
+    const category = await prisma.budgetCategory.create({
+      data: { eventId: event.id, name: "Venue", allocation: 300 },
+    });
+    const expense = await prisma.expense.create({
+      data: { eventId: event.id, title: "Venue deposit", amount: 25, isActual: true },
+    });
+    authState.userId = "owner";
+
+    await actions.saveScenarioProposal(event.id, form({ budget: "1500.50", guestCount: "30" }));
+    const proposal = await prisma.changeProposal.findFirstOrThrow({
+      where: { eventId: event.id, kind: "what-if-scenario" },
+    });
+    expect(proposal.impactText).toContain("Budget target");
+    expect(proposal.proposalData).toContain('"guestCount":30');
+
+    await actions.approveAndApplyScenario(event.id, proposal.id);
+    expect(await prisma.event.findUniqueOrThrow({ where: { id: event.id } })).toMatchObject({
+      budget: 1500.5,
+      guestCount: 30,
+    });
+    expect(await prisma.budgetCategory.findUniqueOrThrow({ where: { id: category.id } })).toMatchObject({ allocation: 300 });
+    expect(await prisma.expense.findUniqueOrThrow({ where: { id: expense.id } })).toMatchObject({ amount: 25, isActual: true });
+    expect(await prisma.changeProposal.findUniqueOrThrow({ where: { id: proposal.id } })).toMatchObject({ status: "approved" });
+
+    await expect(actions.saveScenarioProposal(event.id, form({ budget: "-1", guestCount: "30.5" }))).rejects.toThrow();
+    await expect(prisma.changeProposal.count({ where: { eventId: event.id, kind: "what-if-scenario" } })).resolves.toBe(1);
+
+    await actions.saveScenarioProposal(event.id, form({ budget: "1600", guestCount: "35" }));
+    const staleProposal = await prisma.changeProposal.findFirstOrThrow({
+      where: { eventId: event.id, kind: "what-if-scenario", status: "pending" },
+    });
+    await prisma.event.update({ where: { id: event.id }, data: { guestCount: 31 } });
+    await actions.approveAndApplyScenario(event.id, staleProposal.id);
+    expect(await prisma.changeProposal.findUniqueOrThrow({ where: { id: staleProposal.id } })).toMatchObject({ status: "stale" });
+    expect(await prisma.event.findUniqueOrThrow({ where: { id: event.id } })).toMatchObject({ budget: 1500.5, guestCount: 31 });
+
+    await actions.saveScenarioProposal(event.id, form({ budget: "1700", guestCount: "40" }));
+    const rejectedProposal = await prisma.changeProposal.findFirstOrThrow({
+      where: { eventId: event.id, kind: "what-if-scenario", status: "pending" },
+    });
+    await actions.rejectScenarioProposal(event.id, rejectedProposal.id);
+    expect(await prisma.changeProposal.findUniqueOrThrow({ where: { id: rejectedProposal.id } })).toMatchObject({ status: "rejected" });
+  });
+
+  it("updates RSVP state and removes owned task, guest, vendor, and expense records", async () => {
+    await createUser("owner");
+    const event = await createEvent("owner");
+    authState.userId = "owner";
+
+    const task = await prisma.task.create({ data: { eventId: event.id, title: "Confirm venue", status: "pending" } });
+    const guest = await prisma.guest.create({ data: { eventId: event.id, name: "Invitee Name", email: "invite@example.test" } });
+    const guestRsvp = await prisma.rSVP.create({ data: { guestId: guest.id, status: "pending" } });
+    const vendor = await prisma.vendor.create({ data: { eventId: event.id, name: "Printing partner", category: "Print" } });
+    const expense = await prisma.expense.create({ data: { eventId: event.id, title: "Printing deposit", amount: 35, isActual: true } });
+
+    await actions.updateTaskStatus(event.id, task.id, form({ status: "done" }));
+    await actions.updateRsvpStatus(event.id, guest.id, form({ status: "attending" }));
+
+    const updatedTask = await prisma.task.findUniqueOrThrow({ where: { id: task.id } });
+    const updatedRsvp = await prisma.rSVP.findUniqueOrThrow({ where: { id: guestRsvp.id } });
+    expect(updatedTask.status).toBe("done");
+    expect(updatedRsvp.status).toBe("attending");
+
+    await actions.deleteTask(event.id, task.id);
+    await actions.deleteGuest(event.id, guest.id);
+    await actions.deleteVendor(event.id, vendor.id);
+    await actions.deleteExpense(event.id, expense.id);
+
+    await expect(prisma.task.findUnique({ where: { id: task.id } })).resolves.toBeNull();
+    await expect(prisma.rSVP.findUnique({ where: { id: guestRsvp.id } })).resolves.toBeNull();
+    await expect(prisma.vendor.findUnique({ where: { id: vendor.id } })).resolves.toBeNull();
+    await expect(prisma.expense.findUnique({ where: { id: expense.id } })).resolves.toBeNull();
+    await expect(prisma.task.count({ where: { eventId: event.id } })).resolves.toBe(0);
+    await expect(prisma.guest.count({ where: { eventId: event.id } })).resolves.toBe(0);
+    await expect(prisma.vendor.count({ where: { eventId: event.id } })).resolves.toBe(0);
+    await expect(prisma.expense.count({ where: { eventId: event.id } })).resolves.toBe(0);
   });
 
   it("rejects cross-event category attachment", async () => {
@@ -374,6 +544,15 @@ describe("authorization isolation", () => {
       actions.saveProposal(event.id, { kind: "test", summary: "test", impactText: "test" }),
     ).rejects.toThrow("not authorized");
     await expect(actions.reviewProposal(event.id, form({ summary: "forged" }))).rejects.toThrow("not authorized");
+    await expect(actions.updateTaskStatus(event.id, "missing-task", form({ status: "done" }))).rejects.toThrow("not authorized");
+    await expect(actions.updateRsvpStatus(event.id, "missing-guest", form({ status: "attending" }))).rejects.toThrow("not authorized");
+    await expect(actions.deleteTask(event.id, "missing-task")).rejects.toThrow("not authorized");
+    await expect(actions.deleteGuest(event.id, "missing-guest")).rejects.toThrow("not authorized");
+    await expect(actions.deleteVendor(event.id, "missing-vendor")).rejects.toThrow("not authorized");
+    await expect(actions.deleteExpense(event.id, "missing-expense")).rejects.toThrow("not authorized");
+    await expect(actions.saveScenarioProposal(event.id, form({ budget: "1200", guestCount: "25" }))).rejects.toThrow("not authorized");
+    await expect(actions.approveAndApplyScenario(event.id, "missing-proposal")).rejects.toThrow("not authorized");
+    await expect(actions.rejectScenarioProposal(event.id, "missing-proposal")).rejects.toThrow("not authorized");
     await expect(actions.deleteEvent(event.id)).rejects.toThrow("not authorized");
     await expect(actions.applyBudgetDraft(event.id, form({
       budgetDraft: JSON.stringify({

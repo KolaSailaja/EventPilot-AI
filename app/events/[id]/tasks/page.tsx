@@ -2,7 +2,7 @@ import { notFound, redirect } from "next/navigation";
 
 import { auth } from "@/auth";
 import { EventShell } from "@/components/event-shell";
-import { addTask, updateTaskStatus } from "@/lib/event-actions";
+import { addTask, deleteTask, updateTaskStatus } from "@/lib/event-actions";
 import { calculateBudgetSummary } from "@/lib/budget";
 import prisma from "@/lib/prisma";
 import { formatCurrency } from "@/lib/utils";
@@ -103,15 +103,20 @@ export default async function TasksPage({ params }: { params: Promise<{ id: stri
                         </div>
                       </div>
 
-                      <form action={updateTaskStatus.bind(null, event.id, task.id)} className="flex items-center gap-2">
-                        <select name="status" defaultValue={task.status} className="field-input min-w-[140px] rounded-lg border border-stone-200 bg-stone-50 px-2 py-2 text-sm">
-                          <option value="pending">Pending</option>
-                          <option value="in_progress">In progress</option>
-                          <option value="done">Done</option>
-                          <option value="blocked">Blocked</option>
-                        </select>
-                        <button type="submit" className="rounded-xl border border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700">Update</button>
-                      </form>
+                      <div className="flex items-center gap-2">
+                        <form action={updateTaskStatus.bind(null, event.id, task.id)} className="flex items-center gap-2">
+                          <select name="status" defaultValue={task.status} className="field-input min-w-[140px] rounded-lg border border-stone-200 bg-stone-50 px-2 py-2 text-sm">
+                            <option value="pending">Pending</option>
+                            <option value="in_progress">In progress</option>
+                            <option value="done">Done</option>
+                            <option value="blocked">Blocked</option>
+                          </select>
+                          <button type="submit" className="rounded-xl border border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700">Update</button>
+                        </form>
+                        <form action={deleteTask.bind(null, event.id, task.id)}>
+                          <button type="submit" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">Delete</button>
+                        </form>
+                      </div>
                     </div>
 
                     <div className="mt-3 text-sm text-stone-600">

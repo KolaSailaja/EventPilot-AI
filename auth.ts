@@ -5,9 +5,18 @@ import { PrismaAdapter } from "@auth/prisma-adapter";
 import { authorizeCredentials } from "@/lib/credentials";
 import prisma from "@/lib/prisma";
 
+const authSecret = process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET;
+if (!authSecret) {
+  throw new Error("Missing AUTH_SECRET. Set AUTH_SECRET or NEXTAUTH_SECRET before starting the app.");
+}
+
+const authUrl = process.env.AUTH_URL ?? process.env.NEXTAUTH_URL;
+
 export const { handlers, signIn, signOut, auth } = NextAuth({
   adapter: PrismaAdapter(prisma),
+  secret: authSecret,
   trustHost: true,
+  ...(authUrl ? { url: authUrl } : {}),
   session: {
     strategy: "jwt",
     maxAge: 60 * 60 * 24 * 7,

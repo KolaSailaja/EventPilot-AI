@@ -14,14 +14,19 @@ Covered cases include:
 - cross-event category attachment rejection
 - cross-user denial on all current event mutations and all event read pages
 - budget rounding/aggregation and validation for invalid dates, currencies, guest counts, statuses, and money values
+- OpenAI budget-provider configuration, timeout, rate-limit, malformed response, and schema validation
+- passing persisted event context to saved-event budget generation
+- deterministic event-specific planning notes that account for saved tasks, RSVP follow-up, and organizer menu/accessibility inputs
+- What-If proposal validation, impact arithmetic, explicit apply/reject, stale-baseline protection, and cross-user denial
 
 An additional live HTTP smoke check was executed against a temporary local database: registration → NextAuth credential login/session creation → dashboard access → logout → protected dashboard rejection. This is not a browser automation test.
 
 ## Not covered / not implemented
 - Real browser signup/login/logout and cookie-expiry behavior.
 - Full edit/delete/status workflows for expenses, tasks, vendors, quotations, guests, and RSVPs.
-- Calculated impact proposal approval/rejection and stale-proposal handling.
-- A real external AI provider or malformed-provider response.
+- Browser UI automation for editing/generating a budget or approving a What-If proposal.
+- Real external AI-provider behavior against a live OpenAI account; provider responses are mocked in tests.
+- Applying What-If changes to category allocations, expenses, quotes, tasks, or timelines; current proposals intentionally affect only budget target and guest count.
 - Screen-reader, contrast, responsive-browser, and keyboard-only accessibility validation.
 - Actual browser print output or downloadable export files.
 

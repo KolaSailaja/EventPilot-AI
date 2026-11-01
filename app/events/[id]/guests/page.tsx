@@ -2,7 +2,7 @@ import { notFound, redirect } from "next/navigation";
 
 import { auth } from "@/auth";
 import { EventShell } from "@/components/event-shell";
-import { addGuest } from "@/lib/event-actions";
+import { addGuest, deleteGuest, updateRsvpStatus } from "@/lib/event-actions";
 import prisma from "@/lib/prisma";
 
 export default async function GuestsPage({ params }: { params: Promise<{ id: string }> }) {
@@ -49,6 +49,20 @@ export default async function GuestsPage({ params }: { params: Promise<{ id: str
                   <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-bold uppercase tracking-[0.12em] text-emerald-700">{guest.rsvp?.status || "pending"}</span>
                 </div>
                 {guest.dietaryNotes && <p className="mt-3 text-sm text-stone-600">Dietary notes: {guest.dietaryNotes}</p>}
+                <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <form action={updateRsvpStatus.bind(null, event.id, guest.id)} className="flex items-center gap-2">
+                    <select name="status" defaultValue={guest.rsvp?.status || "pending"} className="rounded-xl border border-stone-300 bg-stone-50 px-2.5 py-2 text-sm">
+                      <option value="pending">Pending</option>
+                      <option value="attending">Attending</option>
+                      <option value="declined">Declined</option>
+                      <option value="maybe">Maybe</option>
+                    </select>
+                    <button type="submit" className="rounded-xl border border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700">Update RSVP</button>
+                  </form>
+                  <form action={deleteGuest.bind(null, event.id, guest.id)}>
+                    <button type="submit" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">Delete</button>
+                  </form>
+                </div>
               </div>
             ))
           )}

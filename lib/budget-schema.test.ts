@@ -11,6 +11,7 @@ const profile: BudgetProfile = {
   currency: "INR",
   date: "2026-11-12",
   priorities: "accessible venue, local food",
+  context: "Community event with step-free venue access.",
 };
 
 const draft = {
@@ -105,6 +106,10 @@ describe("AI budget provider", () => {
     const result = await generateBudgetWithAI(profile);
     expect(result.categories).toHaveLength(2);
     expect(result.contingency).toBe(5_000);
+    const requestBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)) as {
+      messages: Array<{ content: string }>;
+    };
+    expect(requestBody.messages[1]?.content).toContain(profile.context);
     expect(fetchMock).toHaveBeenCalledWith(
       "https://api.openai.com/v1/chat/completions",
       expect.objectContaining({
